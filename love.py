@@ -43,7 +43,7 @@ app.config["SESSION_FILE_DIR"] = "./flask_session"
 os.makedirs(app.config["SESSION_FILE_DIR"], exist_ok=True)
 Session(app)
 
-# Allow Vite frontend (you can restrict later to your domain)
+# Allow Vite frontend (can restrict later)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 # ----------------------------
@@ -60,7 +60,7 @@ def log_message(user_message: str, bot_reply: str):
 def safe_extract_reply(completion) -> str:
     try:
         choice = completion.choices[0]
-        msg = getattr(choice, "message", choice)  
+        msg = getattr(choice, "message", choice)
         content = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", None)
         return content or "Sorry, I could not generate a response."
     except Exception:
@@ -77,24 +77,34 @@ def chat():
         if not user_message:
             return jsonify({"error": "message required"}), 400
 
+        # --- Keyword filtering for love/relationship topics ---
+        love_keywords = ["love", "relationship", "heartbreak", "trust", "emotions", "dating"]
+        if not any(word in user_message.lower() for word in love_keywords):
+            return jsonify({"reply": "I'm sorry, I only provide advice about love and relationships."})
+
+        # --- Initialize session ---
         if "messages" not in session:
             session["messages"] = [
                 {
                     "role": "system",
                     "content": (
-                        "You are a friendly, empathetic chatbot about love, relationships, "
-                        "emotions, heartbreak, trust, and human connection. "
-                        "Reply in the same language the user uses."
+                        "You are an AI chatbot specialized ONLY in love, relationships, "
+                        "breakups, trust, and human connection. "
+                        "If the user asks about anything outside these topics, "
+                        "politely reply: 'I'm sorry, I only provide advice about love and relationships.' "
+                        "Always reply in the same language the user uses."
                     )
                 }
             ]
         if "history" not in session:
             session["history"] = []
 
+        # --- Append user message ---
         session["messages"].append({"role": "user", "content": user_message})
         session["history"].append({"sender": "user", "text": user_message})
         session.modified = True
 
+        # --- Call OpenAI API ---
         completion = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=session["messages"],
@@ -104,10 +114,12 @@ def chat():
 
         bot_reply = safe_extract_reply(completion)
 
+        # --- Save assistant reply ---
         session["messages"].append({"role": "assistant", "content": bot_reply})
         session["history"].append({"sender": "bot", "text": bot_reply})
         session.modified = True
 
+        # --- Log conversation ---
         log_message(user_message, bot_reply)
         logging.info(f"Handled /api/chat: {user_message[:50]}...")
 
@@ -135,7 +147,6 @@ def history():
 @app.route("/", defaults={"path": ""})
 @app.route("/<path:path>")
 def serve_frontend(path):
-    """Optional: serve React/Vite frontend if added inside /frontend/dist"""
     dist_dir = os.path.join(os.path.dirname(__file__), "frontend", "dist")
     if path != "" and os.path.exists(os.path.join(dist_dir, path)):
         from flask import send_from_directory
@@ -149,4 +160,4 @@ def serve_frontend(path):
 # ----------------------------
 if __name__ == "__main__":
     logging.info(f"Starting Flask server on 0.0.0.0:{PORT}")
-    app.run(host="0.0.0.0", port=PORT, debug=False)  # debug=False for production
+    app.run(host="0.0.0.0", port=PORT, debug=False)
