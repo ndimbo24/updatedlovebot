@@ -1,6 +1,6 @@
-flask
-flask-session
-flask-cors
+Flask
+Flask-Session
+Flask-Cors
 python-dotenv
-openai
+openai>=1.0.0
 gunicorn

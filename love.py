@@ -38,12 +38,15 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 # ----------------------------
 app = Flask(__name__)
 app.secret_key = FLASK_SECRET_KEY
+
+# Render-friendly session config
 app.config["SESSION_TYPE"] = "filesystem"
 app.config["SESSION_FILE_DIR"] = "./flask_session"
 os.makedirs(app.config["SESSION_FILE_DIR"], exist_ok=True)
+
 Session(app)
 
-# Allow Vite frontend (can restrict later)
+# Allow Vite frontend
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 # ----------------------------
@@ -52,12 +55,13 @@ CORS(app, resources={r"/api/*": {"origins": "*"}})
 LOG_FILE = "chat_log.txt"
 
 def log_message(user_message: str, bot_reply: str):
-    """Append messages to chat log."""
+    """Append messages to log file."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with open(LOG_FILE, "a", encoding="utf-8") as f:
         f.write(f"[{timestamp}] USER: {user_message}\n[{timestamp}] BOT: {bot_reply}\n\n")
 
 def safe_extract_reply(completion) -> str:
+    """Extract assistant reply safely."""
     try:
         choice = completion.choices[0]
         msg = getattr(choice, "message", choice)
@@ -67,61 +71,69 @@ def safe_extract_reply(completion) -> str:
         return "Sorry, I could not generate a response."
 
 # ----------------------------
-# API Endpoints
+# Chat Endpoint
 # ----------------------------
 @app.route("/api/chat", methods=["POST"])
 def chat():
     try:
         data = request.get_json() or {}
         user_message = (data.get("message") or "").strip()
+
         if not user_message:
             return jsonify({"error": "message required"}), 400
 
-        # --- Keyword filtering for love/relationship topics ---
-        love_keywords = ["love", "relationship", "heartbreak", "trust", "emotions", "dating"]
-        if not any(word in user_message.lower() for word in love_keywords):
-            return jsonify({"reply": "I'm sorry, I only provide advice about love and relationships."})
+        # Swahili + English love-topic keywords
+        love_keywords = [
+            "love", "relationship", "heartbreak", "trust", "emotions", "dating",
+            "mapenzi", "penzi", "moyo", "hisia", "uhusiano", "kuachana", "kuvumiliana"
+        ]
 
-        # --- Initialize session ---
+        msg_lower = user_message.lower()
+
+        if not any(word in msg_lower for word in love_keywords):
+            return jsonify({
+                "reply": "Samahani, naweza kujibu maswali kuhusu mapenzi, mahusiano, hisia na mambo ya moyo tu ❤️."
+            })
+
+        # Initialize session memory
         if "messages" not in session:
             session["messages"] = [
                 {
                     "role": "system",
                     "content": (
-                        "You are an AI chatbot specialized ONLY in love, relationships, "
-                        "breakups, trust, and human connection. "
-                        "If the user asks about anything outside these topics, "
-                        "politely reply: 'I'm sorry, I only provide advice about love and relationships.' "
+                        "You are a chatbot SPECIALIZED ONLY in love, relationships, heartbreak, "
+                        "trust, emotions, and dating. If asked anything else, reply: "
+                        "'Samahani, naweza kujibu maswali ya mapenzi tu.' "
                         "Always reply in the same language the user uses."
                     )
                 }
             ]
+
         if "history" not in session:
             session["history"] = []
 
-        # --- Append user message ---
+        # Save user message
         session["messages"].append({"role": "user", "content": user_message})
         session["history"].append({"sender": "user", "text": user_message})
         session.modified = True
 
-        # --- Call OpenAI API ---
+        # --- OpenAI Completion ---
         completion = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=session["messages"],
-            max_tokens=400,
+            max_tokens=250,
             temperature=0.8
         )
 
         bot_reply = safe_extract_reply(completion)
 
-        # --- Save assistant reply ---
+        # Save reply
         session["messages"].append({"role": "assistant", "content": bot_reply})
         session["history"].append({"sender": "bot", "text": bot_reply})
         session.modified = True
 
-        # --- Log conversation ---
+        # Log conversation
         log_message(user_message, bot_reply)
-        logging.info(f"Handled /api/chat: {user_message[:50]}...")
 
         return jsonify({"reply": bot_reply})
 
@@ -129,34 +141,25 @@ def chat():
         logging.exception("Error in /api/chat")
         return jsonify({"error": "Server error: connection to model failed"}), 500
 
+# ----------------------------
+# Clear Session
+# ----------------------------
 @app.route("/api/clear", methods=["POST"])
 def clear_chat():
     session.pop("messages", None)
     session.pop("history", None)
     session.modified = True
-    logging.info("Chat session cleared")
     return jsonify({"status": "cleared"})
 
+# ----------------------------
+# History
+# ----------------------------
 @app.route("/api/history", methods=["GET"])
 def history():
     return jsonify(session.get("history", []))
 
 # ----------------------------
-# Serve frontend (optional)
-# ----------------------------
-@app.route("/", defaults={"path": ""})
-@app.route("/<path:path>")
-def serve_frontend(path):
-    dist_dir = os.path.join(os.path.dirname(__file__), "frontend", "dist")
-    if path != "" and os.path.exists(os.path.join(dist_dir, path)):
-        from flask import send_from_directory
-        return send_from_directory(dist_dir, path)
-    else:
-        from flask import send_from_directory
-        return send_from_directory(dist_dir, "index.html")
-
-# ----------------------------
-# Run Flask server
+# Run
 # ----------------------------
 if __name__ == "__main__":
     logging.info(f"Starting Flask server on 0.0.0.0:{PORT}")
